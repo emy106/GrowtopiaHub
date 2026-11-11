@@ -1,0 +1,318 @@
+-- Zeno Hub | Delta Executor | Key Fixed
+local Players,RunService,UIS,TS,Cam,lp =
+    game:GetService("Players"),game:GetService("RunService"),
+    game:GetService("UserInputService"),game:GetService("TweenService"),
+    workspace.CurrentCamera,game:GetService("Players").LocalPlayer
+
+local KEYS = {["ZENO-FREE-0001"]=true,["ZENO-ALPHA-2024"]=true}
+local verified = false
+
+local CFG = {
+    Aim=false,Silent=false,Box=true,Tracer=true,
+    Name=true,HP=true,Dist=true,Fov=true,
+    Smooth=0.15,FovR=100,MaxDist=500,
+    Part="Head",Team=true,
+    BCol=Color3.fromRGB(255,60,60),
+    TCol=Color3.fromRGB(60,200,255),
+}
+
+-- drawing pool
+local pool={}
+local function D(t,p) local d=Drawing.new(t) for k,v in pairs(p) do pcall(function()d[k]=v end) end return d end
+local function gc(pl)
+    if pool[pl] then return pool[pl] end
+    local t={box={}}
+    for i=1,4 do t.box[i]=D("Line",{Visible=false,Color=CFG.BCol,Thickness=1}) end
+    t.tr=D("Line",{Visible=false,Color=CFG.TCol,Thickness=1})
+    t.nm=D("Text",{Visible=false,Size=13,Center=true,Outline=true,OutlineColor=Color3.new(0,0,0)})
+    t.hb=D("Line",{Visible=false,Color=Color3.new(0,0,0),Thickness=4})
+    t.hf=D("Line",{Visible=false,Thickness=3})
+    t.ds=D("Text",{Visible=false,Size=11,Center=true,Outline=true,OutlineColor=Color3.new(0,0,0)})
+    pool[pl]=t return t
+end
+local function hide(t)
+    if not t then return end
+    for _,l in ipairs(t.box) do pcall(function()l.Visible=false end) end
+    for _,k in ipairs({"tr","nm","hb","hf","ds"}) do pcall(function()t[k].Visible=false end) end
+end
+Players.PlayerRemoving:Connect(function(p)
+    if not pool[p] then return end
+    hide(pool[p])
+    for _,l in ipairs(pool[p].box) do pcall(function()l:Remove()end) end
+    for _,k in ipairs({"tr","nm","hb","hf","ds"}) do pcall(function()pool[p][k]:Remove()end) end
+    pool[p]=nil
+end)
+
+local FL={} for i=1,4 do FL[i]=D("Line",{Visible=false,Color=Color3.new(1,1,1),Thickness=1}) end
+local function fovDraw()
+    local c,r=Cam.ViewportSize/2,CFG.FovR
+    local pts={{c+Vector2.new(-r,-r),c+Vector2.new(r,-r)},{c+Vector2.new(-r,r),c+Vector2.new(r,r)},
+               {c+Vector2.new(-r,-r),c+Vector2.new(-r,r)},{c+Vector2.new(r,-r),c+Vector2.new(r,r)}}
+    for i,p in ipairs(pts) do pcall(function()FL[i].From=p[1] FL[i].To=p[2] FL[i].Visible=CFG.Fov end) end
+end
+
+local function sc() return Cam.ViewportSize/2 end
+local function ts(p) local s,v,z=Cam:WorldToViewportPoint(p) return Vector2.new(s.X,s.Y),v,z end
+local function alive(p) local h=p.Character and p.Character:FindFirstChildOfClass("Humanoid") return h and h.Health>0 end
+local function bbox(p)
+    local c=p.Character if not c then return end
+    local r=c:FindFirstChild("HumanoidRootPart") if not r then return end
+    local hum=c:FindFirstChildOfClass("Humanoid")
+    local ht=(hum and hum.HipHeight*2+0.5) or 5
+    local sT,vT,zT=ts(r.Position+Vector3.new(0,ht*.6,0))
+    local sB,vB,zB=ts(r.Position-Vector3.new(0,ht*.4,0))
+    if(not vT and not vB)or(zT<=0 and zB<=0)then return end
+    local h=math.abs(sT.Y-sB.Y) local w=h*.5 local cx=(sT.X+sB.X)/2
+    return{tl=Vector2.new(cx-w/2,sT.Y),tr=Vector2.new(cx+w/2,sT.Y),
+           bl=Vector2.new(cx-w/2,sB.Y),br=Vector2.new(cx+w/2,sB.Y),
+           tc=Vector2.new(cx,sT.Y),bc=Vector2.new(cx,sB.Y),lx=cx-w/2}
+end
+local function bestTarget()
+    local best,bh,bd=nil,nil,CFG.FovR*2
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p==lp or(CFG.Team and p.Team==lp.Team)or not alive(p) then continue end
+        local c=p.Character if not c then continue end
+        local h=c:FindFirstChild(CFG.Part) if not h then continue end
+        local sp,v,z=ts(h.Position) if not v or z<=0 then continue end
+        local d=(sp-sc()).Magnitude if d<bd then bd=d best=p bh=h end
+    end
+    return best,bh
+end
+local function doAim(h)
+    local o=Cam.CFrame local d=(h.Position-o.Position).Unit
+    Cam.CFrame=CFrame.new(o.Position,o.Position+d)
+    task.defer(function()Cam.CFrame=o end)
+end
+local function doSmooth(h)
+    Cam.CFrame=Cam.CFrame:Lerp(CFrame.new(Cam.CFrame.Position,h.Position),1-CFG.Smooth)
+end
+local function espDraw(t,bb,p)
+    if CFG.Box then
+        local ls={{bb.tl,bb.tr},{bb.bl,bb.br},{bb.tl,bb.bl},{bb.tr,bb.br}}
+        for i,l in ipairs(ls) do pcall(function()t.box[i].From=l[1] t.box[i].To=l[2] t.box[i].Color=CFG.BCol t.box[i].Visible=true end) end
+    else for _,l in ipairs(t.box) do pcall(function()l.Visible=false end) end end
+    if CFG.Tracer then
+        local o=Vector2.new(sc().X,Cam.ViewportSize.Y)
+        pcall(function()t.tr.From=o t.tr.To=bb.bc t.tr.Color=CFG.TCol t.tr.Visible=true end)
+    else pcall(function()t.tr.Visible=false end) end
+    if CFG.Name then pcall(function()t.nm.Text=p.DisplayName t.nm.Position=Vector2.new(bb.tc.X,bb.tc.Y-16) t.nm.Color=Color3.new(1,1,1) t.nm.Visible=true end)
+    else pcall(function()t.nm.Visible=false end) end
+    if CFG.HP then
+        local hum=p.Character and p.Character:FindFirstChildOfClass("Humanoid")
+        local ratio=hum and math.clamp(hum.Health/hum.MaxHealth,0,1) or 0
+        local bot=bb.bl.Y local top=bb.tl.Y local fy=bot-(bot-top)*ratio
+        pcall(function()t.hb.From=Vector2.new(bb.lx-6,top) t.hb.To=Vector2.new(bb.lx-6,bot) t.hb.Visible=true end)
+        pcall(function()t.hf.From=Vector2.new(bb.lx-6,fy) t.hf.To=Vector2.new(bb.lx-6,bot) t.hf.Color=Color3.fromRGB(255-ratio*255,ratio*255,0) t.hf.Visible=true end)
+    else pcall(function()t.hb.Visible=false t.hf.Visible=false end) end
+    if CFG.Dist then
+        local root=p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            local d=math.floor((root.Position-Cam.CFrame.Position).Magnitude)
+            pcall(function()t.ds.Text=d.."m" t.ds.Position=Vector2.new(bb.bc.X,bb.bc.Y+2) t.ds.Color=Color3.fromRGB(200,200,200) t.ds.Visible=true end)
+        end
+    else pcall(function()t.ds.Visible=false end) end
+end
+
+-- ═══ UI ═══
+local C={bg=Color3.fromRGB(15,15,20),panel=Color3.fromRGB(22,22,30),
+         acc=Color3.fromRGB(120,60,220),acc2=Color3.fromRGB(80,30,180),
+         txt=Color3.fromRGB(230,230,240),sub=Color3.fromRGB(140,140,160),
+         on=Color3.fromRGB(100,220,100),off=Color3.fromRGB(220,70,70),inp=Color3.fromRGB(30,30,40)}
+local function mk(cls,p,par) local o=Instance.new(cls) for k,v in pairs(p) do o[k]=v end if par then o.Parent=par end return o end
+local function cr(r,p) mk("UICorner",{CornerRadius=UDim.new(0,r)},p) end
+local function sk(t,c,p) mk("UIStroke",{Thickness=t,Color=c,ApplyStrokeMode=Enum.ApplyStrokeMode.Border},p) end
+
+local sg=mk("ScreenGui",{
+    Name="ZenoHub",ResetOnSpawn=false,
+    IgnoreGuiInset=true,
+    -- FIX: DisplayOrder tinggi supaya button sik tertutup game UI
+    DisplayOrder=999,
+},lp:WaitForChild("PlayerGui"))
+
+-- ═══ KEY GATE ═══
+local kg=mk("Frame",{
+    Size=UDim2.new(0,300,0,200),
+    Position=UDim2.new(.5,-150,.5,-100),
+    BackgroundColor3=C.bg,BorderSizePixel=0,
+    -- FIX: Active=true + ZIndex tinggi
+    Active=true,ZIndex=10,
+},sg)
+cr(10,kg) sk(1,C.acc,kg)
+
+mk("TextLabel",{
+    Size=UDim2.new(1,0,0,38),ZIndex=11,
+    BackgroundTransparency=1,Text="⚡ ZENO HUB",
+    TextColor3=C.acc,Font=Enum.Font.GothamBold,TextSize=18,
+},kg)
+mk("TextLabel",{
+    Size=UDim2.new(1,-16,0,16),Position=UDim2.new(0,8,0,40),ZIndex=11,
+    BackgroundTransparency=1,Text="Masukkan key untuk aktifkan",
+    TextColor3=C.sub,Font=Enum.Font.Gotham,TextSize=12,
+    TextXAlignment=Enum.TextXAlignment.Left,
+},kg)
+
+local kb=mk("TextBox",{
+    Size=UDim2.new(1,-16,0,38),Position=UDim2.new(0,8,0,60),ZIndex=11,
+    BackgroundColor3=C.inp,TextColor3=C.txt,
+    PlaceholderText="ZENO-XXXX-XXXX",PlaceholderColor3=C.sub,
+    Font=Enum.Font.GothamMono,TextSize=13,
+    -- FIX: ClearTextOnFocus false supaya text kekal
+    ClearTextOnFocus=false,
+    BorderSizePixel=0,
+    -- FIX: MultiLine false, TextEditable true
+    MultiLine=false,TextEditable=true,
+},kg)
+cr(6,kb) sk(1,C.acc2,kb)
+
+local ks=mk("TextLabel",{
+    Size=UDim2.new(1,-16,0,18),Position=UDim2.new(0,8,0,104),ZIndex=11,
+    BackgroundTransparency=1,Text="",TextColor3=C.off,
+    Font=Enum.Font.Gotham,TextSize=12,
+    TextXAlignment=Enum.TextXAlignment.Left,
+},kg)
+
+-- FIX: verify button — ImageButton lebih reliable dari TextButton pada Delta
+local kbtn=mk("TextButton",{
+    Size=UDim2.new(1,-16,0,36),Position=UDim2.new(0,8,0,126),ZIndex=11,
+    BackgroundColor3=C.acc,TextColor3=Color3.new(1,1,1),
+    Font=Enum.Font.GothamBold,TextSize=14,Text="✓ VERIFY KEY",
+    BorderSizePixel=0,AutoButtonColor=true,
+},kg)
+cr(8,kbtn)
+
+-- ═══ VERIFY FUNCTION ═══
+local lastTap=0
+local function tryVerify()
+    -- debounce 0.5s supaya sik double fire
+    local now=tick()
+    if now-lastTap < 0.5 then return end
+    lastTap=now
+
+    local input=kb.Text:gsub("^%s+",""):gsub("%s+$","")  -- trim whitespace
+    if KEYS[input] then
+        verified=true
+        kg.Visible=false
+        hub.Visible=true
+    else
+        ks.Text="❌ Key salah. Cuba lagi."
+        -- flash red
+        kbtn.BackgroundColor3=C.off
+        task.wait(0.3)
+        kbtn.BackgroundColor3=C.acc
+    BackgroundColor3=C.bg,BorderSizePixel=0,
+    Active=true,Visible=false,ZIndex=10,
+},sg)
+cr(12,hub) sk(1,C.acc,hub)
+
+local dg,ds,dp=false,nil,nil
+hub.InputBegan:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+        dg=true ds=i.Position dp=hub.Position
+    end
+end)
+hub.InputEnded:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dg=false end
+end)
+UIS.InputChanged:Connect(function(i)
+    if dg and(i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch)then
+        local d=i.Position-ds hub.Position=UDim2.new(dp.X.Scale,dp.X.Offset+d.X,dp.Y.Scale,dp.Y.Offset+d.Y)
+    end
+end)
+
+local tb=mk("Frame",{Size=UDim2.new(1,0,0,40),BackgroundColor3=C.acc2,BorderSizePixel=0,ZIndex=11},hub)
+cr(12,tb)
+mk("Frame",{Size=UDim2.new(1,0,.5,0),Position=UDim2.new(0,0,.5,0),BackgroundColor3=C.acc2,BorderSizePixel=0,ZIndex=11},tb)
+mk("TextLabel",{Size=UDim2.new(1,-80,1,0),Position=UDim2.new(0,10,0,0),ZIndex=12,BackgroundTransparency=1,Text="⚡ ZENO HUB",TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=15,TextXAlignment=Enum.TextXAlignment.Left},tb)
+
+local minB=mk("TextButton",{Size=UDim2.new(0,26,0,26),Position=UDim2.new(1,-62,0,7),ZIndex=12,BackgroundColor3=Color3.fromRGB(50,50,70),TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=13,Text="—",BorderSizePixel=0,AutoButtonColor=true},tb) cr(6,minB)
+local clsB=mk("TextButton",{Size=UDim2.new(0,26,0,26),Position=UDim2.new(1,-32,0,7),ZIndex=12,BackgroundColor3=Color3.fromRGB(180,40,40),TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=13,Text="✕",BorderSizePixel=0,AutoButtonColor=true},tb) cr(6,clsB)
+
+local scr=mk("ScrollingFrame",{Size=UDim2.new(1,-10,1,-50),Position=UDim2.new(0,5,0,46),ZIndex=11,BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,ScrollBarImageColor3=C.acc,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y},hub)
+mk("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,5)},scr)
+mk("UIPadding",{PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0,2),PaddingRight=UDim.new(0,2)},scr)
+
+local function sec(title)
+    local s=mk("Frame",{Size=UDim2.new(1,0,0,28),BackgroundColor3=C.panel,BorderSizePixel=0,AutomaticSize=Enum.AutomaticSize.Y,ZIndex=11},scr)
+    cr(7,s) sk(1,C.acc2,s)
+    mk("TextLabel",{Size=UDim2.new(1,-8,0,26),Position=UDim2.new(0,8,0,0),ZIndex=12,BackgroundTransparency=1,Text=title,TextColor3=C.acc,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},s)
+    local lst=mk("Frame",{Size=UDim2.new(1,-10,0,0),Position=UDim2.new(0,5,0,28),BackgroundTransparency=1,AutomaticSize=Enum.AutomaticSize.Y,ZIndex=11},s)
+    mk("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)},lst)
+    return lst
+end
+
+local function tog(par,lbl,key,ord)
+    local row=mk("Frame",{Size=UDim2.new(1,0,0,30),BackgroundTransparency=1,LayoutOrder=ord,ZIndex=12},par)
+    mk("TextLabel",{Size=UDim2.new(1,-48,1,0),ZIndex=13,BackgroundTransparency=1,Text=lbl,TextColor3=C.txt,Font=Enum.Font.Gotham,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},row)
+    local pill=mk("Frame",{Size=UDim2.new(0,40,0,20),Position=UDim2.new(1,-42,0.5,-10),BackgroundColor3=CFG[key] and C.on or C.off,BorderSizePixel=0,ZIndex=13},row) cr(10,pill)
+    local dot=mk("Frame",{Size=UDim2.new(0,16,0,16),Position=CFG[key] and UDim2.new(1,-19,0.5,-8) or UDim2.new(0,2,0.5,-8),BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0,ZIndex=14},pill) cr(8,dot)
+    local btn=mk("TextButton",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Text="",ZIndex=15,AutoButtonColor=false},pill)
+    local function flip()
+        CFG[key]=not CFG[key] local on=CFG[key]
+        pill.BackgroundColor3=on and C.on or C.off
+        TS:Create(dot,TweenInfo.new(.12),{Position=on and UDim2.new(1,-19,0.5,-8) or UDim2.new(0,2,0.5,-8)}):Play()
+    end
+    btn.MouseButton1Click:Connect(flip)
+    btn.Activated:Connect(flip)
+    btn.TouchTap:Connect(flip)
+end
+
+local function sld(par,lbl,key,mn,mx,ord,fmt)
+    local row=mk("Frame",{Size=UDim2.new(1,0,0,44),BackgroundTransparency=1,LayoutOrder=ord,ZIndex=12},par)
+    local vl=mk("TextLabel",{Size=UDim2.new(1,0,0,16),ZIndex=13,BackgroundTransparency=1,Text=lbl..": "..(fmt and fmt(CFG[key]) or CFG[key]),TextColor3=C.txt,Font=Enum.Font.Gotham,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},row)
+    local tr=mk("Frame",{Size=UDim2.new(1,0,0,7),Position=UDim2.new(0,0,0,22),BackgroundColor3=C.inp,BorderSizePixel=0,ZIndex=13},row) cr(4,tr)
+    local fi=mk("Frame",{Size=UDim2.new((CFG[key]-mn)/(mx-mn),0,1,0),BackgroundColor3=C.acc,BorderSizePixel=0,ZIndex=14},tr) cr(4,fi)
+    local sd=false
+    local function upd(x) local r=math.clamp((x-tr.AbsolutePosition.X)/tr.AbsoluteSize.X,0,1) local v=math.floor(mn+r*(mx-mn)) CFG[key]=v fi.Size=UDim2.new(r,0,1,0) vl.Text=lbl..": "..(fmt and fmt(v) or v) end
+    tr.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then sd=true upd(i.Position.X) end end)
+    UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then sd=false end end)
+    UIS.InputChanged:Connect(function(i) if sd and(i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch)then upd(i.Position.X) end end)
+end
+
+local function dd(par,lbl,key,opts,ord)
+    local row=mk("Frame",{Size=UDim2.new(1,0,0,30),BackgroundTransparency=1,LayoutOrder=ord,ZIndex=12},par)
+    mk("TextLabel",{Size=UDim2.new(.55,0,1,0),ZIndex=13,BackgroundTransparency=1,Text=lbl,TextColor3=C.txt,Font=Enum.Font.Gotham,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left},row)
+    local btn=mk("TextButton",{Size=UDim2.new(.43,0,0,24),Position=UDim2.new(.57,0,.5,-12),ZIndex=13,BackgroundColor3=C.inp,TextColor3=C.acc,Font=Enum.Font.GothamMono,TextSize=11,Text=CFG[key].." ▾",BorderSizePixel=0,AutoButtonColor=true},row) cr(5,btn)
+    local idx=1 for i,v in ipairs(opts) do if v==CFG[key] then idx=i end end
+    local function cyc() idx=idx%#opts+1 CFG[key]=opts[idx] btn.Text=opts[idx].." ▾" end
+    btn.MouseButton1Click:Connect(cyc)
+    btn.Activated:Connect(cyc)
+    btn.TouchTap:Connect(cyc)
+end
+
+local a=sec("🎯 AIM BOT")
+tog(a,"Auto Aim","Aim",1) tog(a,"Silent Aim","Silent",2) tog(a,"Team Check","Team",3)
+sld(a,"Smooth","Smooth",0,1,4,function(v)return string.format("%.2f",v)end)
+sld(a,"FOV","FovR",20,300,5)
+dd(a,"Part","Part",{"Head","HumanoidRootPart","UpperTorso"},6)
+
+local e=sec("👁 ESP")
+tog(e,"Box","Box",1) tog(e,"Tracer","Tracer",2) tog(e,"Names","Name",3)
+tog(e,"Health","HP",4) tog(e,"Distance","Dist",5) tog(e,"FOV Box","Fov",6)
+sld(e,"Max Dist","MaxDist",50,1000,7)
+
+local open=true
+local function setHub(o) open=o scr.Visible=o hub.Size=o and UDim2.new(0,300,0,440) or UDim2.new(0,300,0,40) end
+local function mflip() setHub(not open) minB.Text=open and "—" or "□" end
+minB.MouseButton1Click:Connect(mflip) minB.Activated:Connect(mflip) minB.TouchTap:Connect(mflip)
+local function cls() hub.Visible=false end
+clsB.MouseButton1Click:Connect(cls) clsB.Activated:Connect(cls) clsB.TouchTap:Connect(cls)
+
+RunService.RenderStepped:Connect(function()
+    if not verified then return end
+    fovDraw()
+    if CFG.Silent then local _,h=bestTarget() if h then doAim(h) end
+    elseif CFG.Aim then local _,h=bestTarget() if h then doSmooth(h) end end
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p==lp then continue end
+        local t=gc(p)
+        if(CFG.Team and p.Team==lp.Team)or not alive(p) then hide(t) continue end
+        local c=p.Character local r=c and c:FindFirstChild("HumanoidRootPart")
+        if not r or(r.Position-Cam.CFrame.Position).Magnitude>CFG.MaxDist then hide(t) continue end
+        local bb=bbox(p) if not bb then hide(t) continue end
+        espDraw(t,bb,p)
+    end
+end)
+
+pcall(function()getgenv().ZenoHub={cfg=CFG} end)
+pcall(function()_G.ZenoHub={cfg=CFG} end)
+print("[ZenoHub] loaded — masukkan key untuk start")
